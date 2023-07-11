@@ -1,45 +1,247 @@
+Design database for Zen class programme
+=======================================================================================================================================================================
+users
+
+{
+  "_id": ObjectId,
+  "name": String,
+  "email": String,
+  "mentor_id": ObjectId
+}
+=======================================================================================================================================================================
+codekata
+{
+  "_id": ObjectId,
+  "user_id": ObjectId,
+  "problem_solved_count": Number
+}
+
+=======================================================================================================================================================================
+attendance
+{
+  "_id": ObjectId,
+  "user_id": ObjectId,
+  "date": Date,
+  "status": String
+}
+
+
+=======================================================================================================================================================================
+topics
+{
+  "_id": ObjectId,
+  "topic_name": String
+}
+
+
+=======================================================================================================================================================================
+tasks
+
+{
+  "_id": ObjectId,
+  "topic_id": ObjectId,
+  "task_name": String,
+  "submission_date": Date
+}
+
+
+=======================================================================================================================================================================
+company_drives
+
+{
+  "_id": ObjectId,
+  "drive_name": String,
+  "drive_date": Date
+}
+
+=======================================================================================================================================================================
+mentors
+
+{
+  "_id": ObjectId,
+  "name": String
+}
+
+=======================================================================================================================================================================
+
 
 Find all the topics and tasks which are thought in the month of October
-SELECT t.topic_name, ts.task_name
-FROM topics t
-INNER JOIN tasks ts ON t.topic_id = ts.topic_id
-WHERE EXTRACT(MONTH FROM ts.submission_date) = 10;
 
+db.topics.aggregate([
+  {
+    $lookup: {
+      from: "tasks",
+      localField: "_id",
+      foreignField: "topic_id",
+      as: "tasks"
+    }
+  },
+  {
+    $unwind: "$tasks"
+  },
+  {
+    $addFields: {
+      month: { $month: "$tasks.submission_date" }
+    }
+  },
+  {
+    $match: {
+      month: 10
+    }
+  },
+  {
+    $project: {
+      topic_name: 1,
+      task_name: "$tasks.task_name"
+    }
+  }
+])
 
-
+=======================================================================================================================================================================
 Find all the company drives which appeared between 15 oct-2020 and 31-oct-2020
-SELECT drive_name
-FROM company_drives
-WHERE drive_date BETWEEN '2020-10-15' AND '2020-10-31';
 
+db.company_drives.find({
+  drive_date: {
+    $gte: ISODate("2020-10-15"),
+    $lte: ISODate("2020-10-31")
+  }
+}, {
+  drive_name: 1
+})
 
+=======================================================================================================================================================================
 Find all the company drives and students who are appeared for the placement.
-SELECT cd.drive_name, u.name
-FROM company_drives cd
-INNER JOIN attendance a ON cd.drive_date = a.date
-INNER JOIN users u ON a.user_id = u.user_id
-WHERE a.status = 'present';
 
+db.company_drives.aggregate([
+  {
+    $lookup: {
+      from: "attendance",
+      localField: "drive_date",
+      foreignField: "date",
+      as: "attendance"
+    }
+  },
+  {
+    $unwind: "$attendance"
+  },
+  {
+    $lookup: {
+      from: "users",
+      localField: "attendance.user_id",
+      foreignField: "_id",
+      as: "user"
+    }
+  },
+  {
+    $unwind: "$user"
+  },
+  {
+    $match: {
+      "attendance.status": "present"
+    }
+  },
+  {
+    $project: {
+      drive_name: 1,
+      student_name: "$user.name"
+    }
+  }
+])
 
-
+=======================================================================================================================================================================
 Find the number of problems solved by the user in codekata
-SELECT c.problem_solved_count
-FROM codekata c
-INNER JOIN users u ON c.user_id = u.user_id
-WHERE u.name = 'user_name';
 
+db.codekata.aggregate([
+  {
+    $match: {
+      user_id: ObjectId("user_id")
+    }
+  },
+  {
+    $group: {
+      _id: "$user_id",
+      problem_solved_count: { $sum: "$problem_solved_count" }
+    }
+  }
+])
 
-
+=======================================================================================================================================================================
 Find all the mentors with who has the mentee's count more than 15
-SELECT m.name, COUNT(u.user_id) AS mentee_count
-FROM mentors m
-INNER JOIN users u ON m.mentor_id = u.mentor_id
-GROUP BY m.name
-HAVING COUNT(u.user_id) > 15;
 
+db.mentors.aggregate([
+  {
+    $lookup: {
+      from: "users",
+      localField: "_id",
+      foreignField: "mentor_id",
+      as: "mentees"
+    }
+  },
+  {
+    $addFields: {
+      mentee_count: { $size: "$mentees" }
+    }
+  },
+  {
+    $match: {
+      mentee_count: { $gt: 15 }
+    }
+  },
+  {
+    $project: {
+      name: 1,
+      mentee_count: 1
+    }
+  }
+])
 
+=======================================================================================================================================================================
 Find the number of users who are absent and task is not submitted  between 15 oct-2020 and 31-oct-2020
-SELECT COUNT(DISTINCT a.user_id)
-FROM attendance a
-LEFT JOIN tasks t ON a.user_id = t.user_id
-WHERE a.status = 'absent' AND (t.submission_date < '2020-10-15' OR t.submission_date > '2020-10-31');
+db.users.aggregate([
+  {
+    $lookup: {
+      from: "attendance",
+      localField: "_id",
+      foreignField: "user_id",
+      as: "attendance"
+    }
+  },
+  {
+    $lookup: {
+      from: "tasks",
+      localField: "_id",
+      foreignField: "user_id",
+      as: "tasks"
+    }
+  },
+  {
+    $addFields: {
+      absent_tasks: {
+        $filter: {
+          input: "$tasks",
+          as: "task",
+          cond: {
+            $and: [
+              { $eq: ["$$task.submission_date", null] },
+              {
+                $gte: ["$$task.submission_date", ISODate("2020-10-15")],
+                $lte: ["$$task.submission_date", ISODate("2020-10-31")]
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    $match: {
+      "attendance.status": "absent",
+      "absent_tasks": { $ne: [] }
+    }
+  },
+  {
+    $count: "user_count"
+  }
+])
+
+=======================================================================================================================================================================
